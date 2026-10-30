@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # monitor-clipboardchanges
 Monitors changes to the system clipboard, logging any copied text or other data. Can be used to detect potentially malicious copy/paste activity. - Focused on System monitoring and alerts
 
