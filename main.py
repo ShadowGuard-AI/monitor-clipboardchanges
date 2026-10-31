@@ -1,8 +1,12 @@
 import argparse
+import hashlib
 import logging
+import sys
 import time
 import pyperclip
 import os
+
+MAX_CONSECUTIVE_FAILURES = 5
 
 
 def setup_argparse():
@@ -43,24 +47,58 @@ def setup_logging(log_file, log_level):
 
 
 def monitor_clipboard(interval):
-    """Monitors clipboard changes and logs them."""
+    """Monitors clipboard changes and logs them.
+
+    The content already present at startup is taken as the silent
+    baseline and is not logged. Later changes are logged only as a
+    SHA256 digest and a character length. Clipboard text itself is
+    never written to the log.
+    """
     previous_clipboard_content = None
+    baseline_set = False
+    consecutive_failures = 0
     try:
         while True:
             try:
                 current_clipboard_content = pyperclip.paste()
-                if current_clipboard_content != previous_clipboard_content:
-                    logging.info(f"Clipboard changed: {current_clipboard_content}")
+                consecutive_failures = 0
+                if not baseline_set:
+                    previous_clipboard_content = current_clipboard_content
+                    baseline_set = True
+                elif current_clipboard_content != previous_clipboard_content:
+                    digest = hashlib.sha256(current_clipboard_content.encode("utf-8")).hexdigest()
+                    if current_clipboard_content == "":
+                        logging.info(
+                            f"Clipboard changed: cleared or non-text clipboard "
+                            f"(empty result) sha256={digest} length=0"
+                        )
+                    else:
+                        logging.info(
+                            f"Clipboard changed: sha256={digest} "
+                            f"length={len(current_clipboard_content)}"
+                        )
                     previous_clipboard_content = current_clipboard_content
             except pyperclip.PyperclipException as e:
+                consecutive_failures += 1
                 logging.error(f"Error accessing clipboard: {e}")
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logging.error(
+                        f"Clipboard unreadable after {MAX_CONSECUTIVE_FAILURES} "
+                        f"consecutive failures."
+                    )
+                    sys.exit(1)
             except Exception as e:
+                consecutive_failures += 1
                 logging.error(f"An unexpected error occurred: {e}")
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logging.error(
+                        f"Clipboard unreadable after {MAX_CONSECUTIVE_FAILURES} "
+                        f"consecutive failures."
+                    )
+                    sys.exit(1)
             time.sleep(interval)
     except KeyboardInterrupt:
         logging.info("Clipboard monitoring stopped.")
-    except Exception as e:
-        logging.critical(f"An unrecoverable error occurred: {e}")
 
 
 def validate_args(args):
@@ -80,27 +118,14 @@ def main():
         logging.info("Clipboard monitoring started.")
         monitor_clipboard(args.interval)
     except ValueError as ve:
-        logging.error(f"Invalid argument value: {ve}")
+        print(f"Invalid argument value: {ve}", file=sys.stderr)
+        sys.exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
-        logging.critical(f"An unrecoverable error occurred during setup: {e}")
+        print(f"An unrecoverable error occurred during setup: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    """Entry point of the script."""
     main()
-
-# Usage Example:
-# 1. Default usage: python main.py
-# This will log clipboard changes to clipboard_monitor.log with INFO level and 1 second interval.
-#
-# 2. Custom log file: python main.py --log-file my_clipboard.log
-# This will log to my_clipboard.log file.
-#
-# 3. Custom log level: python main.py --log-level DEBUG
-# This will log at DEBUG level.
-#
-# 4. Custom interval: python main.py --interval 0.5
-# This will check the clipboard every 0.5 seconds.
-#
-# 5. Combination: python main.py --log-file my_clipboard.log --log-level DEBUG --interval 2
-# This will log to my_clipboard.log, at DEBUG level, every 2 seconds
