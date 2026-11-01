@@ -63,11 +63,25 @@ def monitor_clipboard(interval):
                 current_clipboard_content = pyperclip.paste()
                 consecutive_failures = 0
                 if not baseline_set:
+                    # The first successful read becomes the baseline whenever it
+                    # happens. If the clipboard was unreadable for a while,
+                    # everything copied during the outage is folded into that
+                    # baseline in silence, and only changes after it are logged.
                     previous_clipboard_content = current_clipboard_content
                     baseline_set = True
                 elif current_clipboard_content != previous_clipboard_content:
+                    # A digest is not a redaction for short content. A copied PIN,
+                    # a short password, a one word answer: anyone holding this
+                    # log can guess the text and check the guess against the
+                    # hash and the exact length beside it. The log is safer than
+                    # plain text, and it is not safe to treat as harmless.
                     digest = hashlib.sha256(current_clipboard_content.encode("utf-8")).hexdigest()
                     if current_clipboard_content == "":
+                        # An image copied to the clipboard reads as an empty string
+                        # from pyperclip on the usual backends, so it is logged in
+                        # this same cleared shape. I cannot tell a cleared clipboard
+                        # from a picture, and my log does not pretend otherwise once
+                        # you know the empty result covers both.
                         logging.info(
                             f"Clipboard changed: cleared or non-text clipboard "
                             f"(empty result) sha256={digest} length=0"
@@ -96,6 +110,11 @@ def monitor_clipboard(interval):
                         f"consecutive failures."
                     )
                     sys.exit(1)
+            # Polling at this interval is the whole detection method, so
+            # a copy that is replaced again before the next check is
+            # never seen. A fast A to B to A sequence logs nothing, and
+            # the effective interval is this sleep plus whatever time
+            # the paste call itself takes.
             time.sleep(interval)
     except KeyboardInterrupt:
         logging.info("Clipboard monitoring stopped.")
